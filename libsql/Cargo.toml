@@ -14,26 +14,39 @@ futures = { version = "0.3.28", optional = true }
 libsql-sys = { version = "0.5", path = "../libsql-sys", optional = true }
 libsql-hrana = { version = "0.1", path = "../libsql-hrana", optional = true }
 tokio = { version = "1.29.1", features = ["sync"], optional = true }
-tokio-util = { version = "0.7", features = ["io-util", "codec"], optional = true }
+tokio-util = { version = "0.7", features = [
+  "io-util",
+  "codec",
+], optional = true }
 parking_lot = { version = "0.12.1", optional = true }
 hyper = { version = "0.14", features = ["client", "stream"], optional = true }
-hyper-rustls = { version = "0.25", features = ["webpki-roots"], optional = true }
+hyper-rustls = { version = "0.25", features = [
+  "webpki-roots",
+], optional = true }
 base64 = { version = "0.21", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 async-trait = "0.1"
 bitflags = { version = "2.4.0", optional = true }
 tower = { version = "0.4", features = ["util"], optional = true }
-worker = { version = "0.0.18", optional = true }
+worker = { version = "0.3.0", optional = true }
 
 bincode = { version = "1", optional = true }
 anyhow = { version = "1.0.71", optional = true }
 bytes = { version = "1.4.0", features = ["serde"], optional = true }
 uuid = { version = "1.4.0", features = ["v4", "serde"], optional = true }
 tokio-stream = { version = "0.1.14", optional = true }
-tonic = { version = "0.11", features = ["tls", "tls-roots", "tls-webpki-roots"], optional = true}
+tonic = { version = "0.11", features = [
+  "tls",
+  "tls-roots",
+  "tls-webpki-roots",
+], optional = true }
 tonic-web = { version = "0.11", optional = true }
-tower-http = { version = "0.4.4", features = ["trace", "set-header", "util"], optional = true }
+tower-http = { version = "0.4.4", features = [
+  "trace",
+  "set-header",
+  "util",
+], optional = true }
 http = { version = "0.2", optional = true }
 zerocopy = { version = "0.7.28", optional = true }
 
@@ -44,7 +57,12 @@ libsql_replication = { version = "0.3", path = "../libsql-replication", optional
 async-stream = { version = "0.3.5", optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports", "async", "async_futures", "async_tokio"] }
+criterion = { version = "0.5", features = [
+  "html_reports",
+  "async",
+  "async_futures",
+  "async_tokio",
+] }
 pprof = { version = "0.12.1", features = ["criterion", "flamegraph"] }
 tokio = { version = "1.29.1", features = ["full"] }
 tokio-test = "0.4"
@@ -53,20 +71,9 @@ tempfile = { version = "3.7.0" }
 
 [features]
 default = ["core", "replication", "remote"]
-core = [
-  "libsql-sys",
-  "dep:bitflags",
-  "dep:bytes",
-  "dep:futures",
-]
-stream = [
-  "dep:futures",
-  "dep:async-stream"
-]
-parser = [
-  "dep:sqlite3-parser",
-  "dep:fallible-iterator"
-]
+core = ["libsql-sys", "dep:bitflags", "dep:bytes", "dep:futures"]
+stream = ["dep:futures", "dep:async-stream"]
+parser = ["dep:sqlite3-parser", "dep:fallible-iterator"]
 replication = [
   "core",
   "parser",
@@ -117,10 +124,7 @@ remote = [
   "dep:hyper-rustls",
 ]
 wasm = ["hrana"]
-cloudflare = [
-  "wasm",
-  "dep:worker"
-]
+cloudflare = ["wasm", "dep:worker"]
 encryption = ["core", "libsql-sys/encryption", "dep:bytes"]
 
 [[bench]]
