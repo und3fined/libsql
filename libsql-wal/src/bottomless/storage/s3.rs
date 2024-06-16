@@ -1,9 +1,10 @@
 //! S3 implementation of storage
 
-use std::future::Future;
+use libsql_sys::name::NamespaceName;
+use std::{future::Future, path::Path};
 
 use super::Storage;
-use crate::{bottomless::Result, io::file::FileExt, name::NamespaceName};
+use crate::{bottomless::Result, io::file::FileExt};
 
 pub struct S3Storage {}
 
@@ -17,7 +18,7 @@ impl Storage for S3Storage {
         _config: &Self::Config,
         _namespace: NamespaceName,
         _frame_no: u64,
-        _dest: impl tokio::io::AsyncWrite,
+        _dest: &Path,
     ) -> Result<()> {
         todo!()
     }

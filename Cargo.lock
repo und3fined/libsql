@@ -1127,7 +1127,11 @@ dependencies = [
  "mime",
  "pin-project-lite",
  "serde",
+ "serde_html_form",
+ "serde_json",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",
@@ -3302,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "libsql"
-version = "0.3.5"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3359,7 +3363,7 @@ dependencies = [
 
 [[package]]
 name = "libsql-ffi"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bindgen 0.66.1",
  "cc",
@@ -3368,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "libsql-hrana"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.21.7",
  "bytes",
@@ -3379,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "libsql-rusqlite"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "bencher",
  "bitflags 2.5.0",
@@ -3403,7 +3407,7 @@ dependencies = [
 
 [[package]]
 name = "libsql-server"
-version = "0.24.12"
+version = "0.24.14"
 dependencies = [
  "aes",
  "anyhow",
@@ -3448,6 +3452,7 @@ dependencies = [
  "libsql-hrana",
  "libsql-rusqlite",
  "libsql-sqlite3-parser",
+ "libsql-storage",
  "libsql-sys",
  "libsql-wal",
  "libsql_replication",
@@ -3459,6 +3464,7 @@ dependencies = [
  "nix 0.26.4",
  "once_cell",
  "parking_lot",
+ "pem",
  "pin-project-lite",
  "priority-queue 1.4.0",
  "proptest",
@@ -3497,7 +3503,7 @@ dependencies = [
 
 [[package]]
 name = "libsql-sqlite3-parser"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "bitflags 2.5.0",
  "cc",
@@ -3517,10 +3523,17 @@ dependencies = [
 name = "libsql-storage"
 version = "0.0.1"
 dependencies = [
+ "libsql-sys",
+ "log",
+ "parking_lot",
  "prost",
  "prost-build",
+ "sieve-cache",
+ "tokio",
  "tonic 0.10.2",
  "tonic-build 0.10.2",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3545,7 +3558,7 @@ dependencies = [
 
 [[package]]
 name = "libsql-sys"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "libsql-ffi",
@@ -3560,6 +3573,8 @@ name = "libsql-wal"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "async-stream",
+ "bitflags 2.5.0",
  "bytes",
  "chrono",
  "crc32fast",
@@ -3570,7 +3585,6 @@ dependencies = [
  "hex",
  "insta",
  "libsql-sys",
- "memoffset 0.9.1",
  "nix 0.28.0",
  "once_cell",
  "parking_lot",
@@ -3581,6 +3595,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tracing",
  "uuid",
  "walkdir",
@@ -3608,7 +3623,7 @@ dependencies = [
 
 [[package]]
 name = "libsql_replication"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "aes",
  "arbitrary",
@@ -3765,15 +3780,6 @@ name = "memoffset"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d61c719bcfbcf5d62b3a09efa6088de8c54bc0bfcd3ea7ae39fcc186108b8de1"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
-name = "memoffset"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
 ]
@@ -5225,6 +5231,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_html_form"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8de514ef58196f1fc96dcaef80fe6170a1ce6215df9687a93fe8300e773fefc5"
+dependencies = [
+ "form_urlencoded",
+ "indexmap 2.2.6",
+ "itoa",
+ "ryu",
+ "serde",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5322,6 +5341,12 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "sieve-cache"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51bf3a9dccf2c079bf1465d449a485c85b36443caf765f2f127bfec28b180f75"
 
 [[package]]
 name = "signal-hook-registry"
@@ -5776,6 +5801,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

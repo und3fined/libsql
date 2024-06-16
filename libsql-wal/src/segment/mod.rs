@@ -7,10 +7,10 @@
 //! maximum frame_no that this reader is allowed to read. The reader also keeps a reference to the
 //! head segment at the moment it was created.
 #![allow(dead_code)]
+use std::mem::offset_of;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 
-use memoffset::offset_of;
 use zerocopy::byteorder::little_endian::{U32, U64};
 use zerocopy::AsBytes;
 
@@ -19,6 +19,15 @@ use crate::error::{Error, Result};
 pub mod current;
 pub mod list;
 pub mod sealed;
+
+bitflags::bitflags! {
+    pub struct SegmentFlags: u32 {
+        /// Frames in the segment are ordered in ascending frame_no.
+        /// This is true for a segment created by a primary, but a replica may insert frames in any
+        /// order, as long as commit boundaries are preserved.
+        const FRAME_UNORDERED = 1 << 0;
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, zerocopy::AsBytes, zerocopy::FromBytes, zerocopy::FromZeroes, Clone, Copy)]
@@ -33,6 +42,7 @@ pub struct SegmentHeader {
     pub index_size: U64,
     /// checksum of the header fields, excluding the checksum itself. This field must be the last
     pub header_cheksum: U64,
+    pub flags: U32,
 }
 
 impl SegmentHeader {
@@ -53,6 +63,14 @@ impl SegmentHeader {
         } else {
             return Err(Error::InvalidHeaderChecksum);
         }
+    }
+
+    fn flags(&self) -> SegmentFlags {
+        SegmentFlags::from_bits(self.flags.get()).unwrap()
+    }
+
+    fn set_flags(&mut self, flags: SegmentFlags) {
+        self.flags = flags.bits().into();
     }
 
     fn recompute_checksum(&mut self) {
@@ -148,6 +166,15 @@ impl Frame {
 
     pub fn header(&self) -> &FrameHeader {
         &self.header
+    }
+
+    pub fn header_mut(&mut self) -> &mut FrameHeader {
+        &mut self.header
+    }
+
+    pub(crate) fn size_after(&self) -> Option<u32> {
+        let size_after = self.header().size_after.get();
+        (size_after != 0).then_some(size_after)
     }
 }
 

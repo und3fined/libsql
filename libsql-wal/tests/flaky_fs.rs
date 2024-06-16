@@ -5,10 +5,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::Arc;
 
+use libsql_sys::name::NamespaceName;
 use libsql_sys::rusqlite::{self, ErrorCode, OpenFlags};
 use libsql_wal::{
     io::{file::FileExt, Io},
-    name::NamespaceName,
     registry::WalRegistry,
     wal::LibsqlWalManager,
 };
@@ -131,6 +131,10 @@ impl Io for FlakyIo {
     }
 
     fn uuid(&self) -> uuid::Uuid {
+        todo!()
+    }
+
+    fn hard_link(&self, _src: &Path, _dst: &Path) -> std::io::Result<()> {
         todo!()
     }
 }

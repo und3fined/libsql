@@ -27,11 +27,14 @@ pub trait FileExt: Send + Sync + 'static {
         }
     }
 
+    #[must_use]
     fn read_exact_at_async<B: IoBufMut + Send + 'static>(
         &self,
         buf: B,
         offset: u64,
     ) -> impl Future<Output = (B, Result<()>)> + Send;
+
+    #[must_use]
     fn write_all_at_async<B: IoBuf + Send + 'static>(
         &self,
         buf: B,
@@ -132,6 +135,77 @@ impl FileExt for File {
 
     fn len(&self) -> io::Result<u64> {
         Ok(self.metadata()?.len())
+    }
+}
+
+impl FileExt for Vec<u8> {
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.len() as u64)
+    }
+
+    fn write_all_at(&self, _buf: &[u8], _offset: u64) -> Result<()> {
+        todo!()
+    }
+
+    fn write_at_vectored(&self, _bufs: &[IoSlice], _offset: u64) -> Result<usize> {
+        todo!()
+    }
+
+    fn write_at(&self, _buf: &[u8], _offset: u64) -> Result<usize> {
+        todo!()
+    }
+
+    fn read_exact_at(&self, _buf: &mut [u8], _offset: u64) -> Result<()> {
+        todo!()
+    }
+
+    fn sync_all(&self) -> Result<()> {
+        todo!()
+    }
+
+    fn set_len(&self, _len: u64) -> Result<()> {
+        todo!()
+    }
+
+    fn read_exact_at_async<B: IoBufMut + Send + 'static>(
+        &self,
+        mut buf: B,
+        offset: u64,
+    ) -> impl Future<Output = (B, Result<()>)> + Send {
+        async move {
+            let slice = &self[offset as usize..];
+
+            if slice.len() < buf.bytes_total() {
+                return (
+                    buf,
+                    Err(io::Error::new(ErrorKind::UnexpectedEof, "early eof")),
+                );
+            }
+
+            let chunk = unsafe {
+                let len = buf.bytes_total();
+                let ptr = buf.stable_mut_ptr();
+                std::slice::from_raw_parts_mut(ptr, len)
+            };
+
+            debug_assert_eq!(chunk.len(), slice.len());
+
+            chunk.clone_from_slice(slice);
+
+            unsafe {
+                buf.set_init(chunk.len());
+            }
+
+            (buf, Ok(()))
+        }
+    }
+
+    async fn write_all_at_async<B: IoBuf + Send + 'static>(
+        &self,
+        _buf: B,
+        _offset: u64,
+    ) -> (B, Result<()>) {
+        todo!()
     }
 }
 

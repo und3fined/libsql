@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufWriter, IoSlice, Write};
 use std::num::NonZeroU64;
+use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -9,14 +10,17 @@ use std::sync::{
 
 use fst::MapBuilder;
 use parking_lot::{Mutex, RwLock};
+use tokio_stream::Stream;
 use zerocopy::{AsBytes, FromZeroes};
 
+use crate::io::buf::{ZeroCopyBoxIoBuf, ZeroCopyBuf};
 use crate::io::file::FileExt;
+use crate::segment::SegmentFlags;
 use crate::segment::{frame_offset, page_offset, sealed::SealedSegment};
-use crate::transaction::{Transaction, WriteTransaction};
+use crate::transaction::{Transaction, TxGuard};
 
 use super::list::SegmentList;
-use super::{FrameHeader, SegmentHeader};
+use super::{Frame, FrameHeader, SegmentHeader};
 
 use crate::error::Result;
 
@@ -52,6 +56,7 @@ impl<F> CurrentSegment<F> {
             index_offset: 0.into(),
             index_size: 0.into(),
             header_cheksum: 0.into(),
+            flags: 0.into(),
         };
 
         header.recompute_checksum();
@@ -94,23 +99,102 @@ impl<F> CurrentSegment<F> {
         self.header.lock().db_size.get()
     }
 
+    /// insert a bunch of frames in the Wal. The frames needn't be ordered, therefore, on commit
+    /// the last frame no needs to be passed alongside the new size_after.
+    #[tracing::instrument(skip_all)]
+    pub async fn insert_frames(
+        &self,
+        frames: Vec<Box<Frame>>,
+        // (size_after, last_frame_no)
+        commit_data: Option<(u32, u64)>,
+        tx: &mut TxGuard<'_, F>,
+    ) -> Result<Vec<Box<Frame>>>
+    where
+        F: FileExt,
+    {
+        assert!(!self.sealed.load(Ordering::SeqCst));
+        {
+            let tx = tx.deref_mut();
+            // let mut commit_frame_written = false;
+            let current_savepoint = tx.savepoints.last_mut().expect("no savepoints initialized");
+            let mut frames = frame_list_to_option(frames);
+            for i in 0..frames.len() {
+                let offset = tx.next_offset;
+                let buf = ZeroCopyBoxIoBuf(frames[i].take().unwrap());
+                let (buf, ret) = self
+                    .file
+                    .write_all_at_async(buf, frame_offset(offset))
+                    .await;
+
+                ret?;
+
+                let frame = buf.0;
+
+                current_savepoint
+                    .index
+                    .insert(frame.header().page_no(), offset);
+                tx.next_offset += 1;
+                frames[i] = Some(frame);
+            }
+
+            if let Some((size_after, last_frame_no)) = commit_data {
+                if tx.not_empty() {
+                    let mut header = { *self.header.lock() };
+                    header.last_commited_frame_no = last_frame_no.into();
+                    header.db_size = size_after.into();
+                    // set frames unordered because there are no guarantees that we received frames
+                    // in order.
+                    header.set_flags(header.flags().union(SegmentFlags::FRAME_UNORDERED));
+                    header.recompute_checksum();
+
+                    let (header, ret) = self
+                        .file
+                        .write_all_at_async(ZeroCopyBuf::new_init(header), 0)
+                        .await;
+
+                    ret?;
+
+                    // self.file.sync_data().unwrap();
+                    tx.merge_savepoints(&mut self.index.index.write());
+                    // set the header last, so that a transaction does not witness a write before
+                    // it's actually committed.
+                    *self.header.lock() = header.into_inner();
+
+                    tx.is_commited = true;
+                }
+            }
+
+            let frames = options_to_frame_list(frames);
+
+            Ok(frames)
+        }
+    }
+
     #[tracing::instrument(skip(self, pages, tx))]
     pub fn insert_pages<'a>(
         &self,
         pages: impl Iterator<Item = (u32, &'a [u8])>,
         size_after: Option<u32>,
-        tx: &mut WriteTransaction<F>,
-    ) -> Result<()>
+        tx: &mut TxGuard<F>,
+    ) -> Result<Option<u64>>
     where
         F: FileExt,
     {
         assert!(!self.sealed.load(Ordering::SeqCst));
-        tx.enter(move |tx| {
+        {
+            let tx = tx.deref_mut();
             let mut pages = pages.peekable();
             // let mut commit_frame_written = false;
             let current_savepoint = tx.savepoints.last_mut().expect("no savepoints initialized");
             while let Some((page_no, page)) = pages.next() {
-                tracing::trace!(page_no, "inserting page");
+                // optim: if the page is already present, overwrite its content
+                if let Some(offset) = current_savepoint.index.get(&page_no) {
+                    tracing::trace!(page_no, "recycling frame");
+                    self.file.write_all_at(page, page_offset(*offset))?;
+                    continue;
+                }
+
+                tracing::trace!(page_no, "inserting new frame");
                 let size_after = if let Some(size) = size_after {
                     pages.peek().is_none().then_some(size).unwrap_or(0)
                 } else {
@@ -130,32 +214,36 @@ impl<F> CurrentSegment<F> {
                     frame_no
                 );
                 self.file.write_at_vectored(slices, frame_offset(offset))?;
-                current_savepoint.index.insert(page_no, offset);
+                assert!(
+                    current_savepoint.index.insert(page_no, offset).is_none(),
+                    "existing frames should be recycled"
+                );
                 tx.next_frame_no += 1;
                 tx.next_offset += 1;
             }
+        }
 
-            if let Some(size_after) = size_after {
-                if tx.not_empty() {
-                    let last_frame_no = tx.next_frame_no - 1;
-                    let mut header = { *self.header.lock() };
-                    header.last_commited_frame_no = last_frame_no.into();
-                    header.db_size = size_after.into();
-                    header.recompute_checksum();
+        if let Some(size_after) = size_after {
+            if tx.not_empty() {
+                let last_frame_no = tx.next_frame_no - 1;
+                let mut header = { *self.header.lock() };
+                header.last_commited_frame_no = last_frame_no.into();
+                header.db_size = size_after.into();
+                header.recompute_checksum();
 
-                    self.file.write_all_at(header.as_bytes(), 0)?;
-                    // self.file.sync_data().unwrap();
-                    tx.merge_savepoints(&mut self.index.index.write());
-                    // set the header last, so that a transaction does not witness a write before
-                    // it's actually committed.
-                    *self.header.lock() = header;
+                self.file.write_all_at(header.as_bytes(), 0)?;
+                // self.file.sync_data().unwrap();
+                tx.merge_savepoints(&mut self.index.index.write());
+                // set the header last, so that a transaction does not witness a write before
+                // it's actually committed.
+                *self.header.lock() = header;
 
-                    tx.is_commited = true;
-                }
+                tx.is_commited = true;
+
+                return Ok(Some(last_frame_no));
             }
-
-            Ok(())
-        })
+        }
+        Ok(None)
     }
 
     /// return the offset of the frame for page_no, with frame_no no larger that max_frame_no, if
@@ -261,7 +349,48 @@ impl<F> CurrentSegment<F> {
     pub fn tail(&self) -> &Arc<SegmentList<F>> {
         &self.tail
     }
+
+    // todo: maybe return boxed frames?
+    pub fn rev_frame_stream(&self) -> impl Stream<Item = Result<Frame>> + '_
+    where
+        F: FileExt,
+    {
+        async_stream::try_stream! {
+            let (start_frame_no, last_committed) = {
+                let header = self.header.lock();
+                (header.start_frame_no.get(), header.last_commited_frame_no.get())
+            };
+            let mut next_offset = (last_committed - start_frame_no) as u32;
+            loop {
+                let byte_offset = frame_offset(next_offset);
+
+                let buf = ZeroCopyBuf::<Frame>::new_uninit();
+                let (buf, ret) = self.file.read_exact_at_async(buf, byte_offset).await;
+                ret?;
+                yield buf.into_inner();
+                if next_offset == 0 {
+                    break
+                } else {
+                    next_offset -= 1;
+                }
+            }
+        }
+    }
 }
+
+fn frame_list_to_option(frames: Vec<Box<Frame>>) -> Vec<Option<Box<Frame>>> {
+    // this is safe because Option<Box<T>> and Box<T> are the same size and Frame is sized:
+    // https://doc.rust-lang.org/std/option/index.html#representation
+    unsafe { std::mem::transmute(frames) }
+}
+
+fn options_to_frame_list(frames: Vec<Option<Box<Frame>>>) -> Vec<Box<Frame>> {
+    debug_assert!(frames.iter().all(|f| f.is_some()));
+    // this is safe because Option<Box<T>> and Box<T> are the same size and Frame is sized:
+    // https://doc.rust-lang.org/std/option/index.html#representation
+    unsafe { std::mem::transmute(frames) }
+}
+
 impl<F> Drop for CurrentSegment<F> {
     fn drop(&mut self) {
         // todo: if reader is 0 and segment is sealed, register for compaction.

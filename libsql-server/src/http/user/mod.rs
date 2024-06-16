@@ -2,6 +2,7 @@ pub mod db_factory;
 mod dump;
 mod extract;
 mod hrana_over_http_1;
+mod listen;
 mod result_builder;
 mod trace;
 mod types;
@@ -234,7 +235,7 @@ pub(crate) struct AppState {
     enable_console: bool,
     disable_default_namespace: bool,
     disable_namespaces: bool,
-    path: Arc<Path>,
+    primary_url: Option<String>,
 }
 
 pub struct UserApi<A, P, S> {
@@ -250,6 +251,7 @@ pub struct UserApi<A, P, S> {
     pub max_response_size: u64,
     pub enable_console: bool,
     pub self_url: Option<String>,
+    pub primary_url: Option<String>,
     pub path: Arc<Path>,
     pub shutdown: Arc<Notify>,
 }
@@ -315,7 +317,7 @@ where
                 namespaces: self.namespaces,
                 disable_default_namespace: self.disable_default_namespace,
                 disable_namespaces: self.disable_namespaces,
-                path: self.path,
+                primary_url: self.primary_url.clone(),
             };
 
             macro_rules! handle_hrana {
@@ -349,6 +351,7 @@ where
                 .route("/console", get(show_console))
                 .route("/health", get(handle_health))
                 .route("/dump", get(dump::handle_dump))
+                .route("/beta/listen", get(listen::handle_listen))
                 .route("/v1", get(hrana_over_http_1::handle_index))
                 .route("/v1/execute", post(hrana_over_http_1::handle_execute))
                 .route("/v1/batch", post(hrana_over_http_1::handle_batch))
@@ -464,9 +467,9 @@ impl FromRequestParts<AppState> for Authenticated {
             state.disable_namespaces,
         )?;
         // todo dupe #auth
-        let namespace_jwt_key = state
+        let namespace_jwt_keys = state
             .namespaces
-            .with(ns.clone(), |ns| ns.jwt_key())
+            .with(ns.clone(), |ns| ns.jwt_keys())
             .await??;
 
         let context = parts
@@ -476,7 +479,7 @@ impl FromRequestParts<AppState> for Authenticated {
             .and_then(|h| h.to_str().map_err(|_| AuthError::AuthHeaderNonAscii))
             .and_then(|t| UserAuthContext::from_auth_str(t));
 
-        let authenticated = namespace_jwt_key
+        let authenticated = namespace_jwt_keys
             .map(Jwt::new)
             .map(Auth::new)
             .unwrap_or_else(|| state.user_auth_strategy.clone())

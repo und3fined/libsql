@@ -12,22 +12,11 @@ use zerocopy::{AsBytes, FromZeroes};
 use crate::error::Result;
 use crate::io::file::FileExt;
 use crate::io::{Io, StdIO};
-use crate::name::NamespaceName;
 use crate::segment::list::SegmentList;
 use crate::segment::{current::CurrentSegment, sealed::SealedSegment};
 use crate::shared_wal::SharedWal;
-use crate::transaction::{Transaction, WriteTransaction};
-
-/// Translates a path to a namespace name
-pub trait NamespaceResolver: Send + Sync + 'static {
-    fn resolve(&self, path: &Path) -> NamespaceName;
-}
-
-impl<F: Fn(&Path) -> NamespaceName + Send + Sync + 'static> NamespaceResolver for F {
-    fn resolve(&self, path: &Path) -> NamespaceName {
-        (self)(path)
-    }
-}
+use crate::transaction::{Transaction, TxGuard};
+use libsql_sys::name::{NamespaceName, NamespaceResolver};
 
 /// called on every segment on swap.
 pub trait SegmentSwapHandler<F>: Send + Sync + 'static {
@@ -199,12 +188,16 @@ impl<FS: Io> WalRegistry<FS> {
             tail.into(),
         )?));
 
+        let (new_frame_notifier, _) = tokio::sync::watch::channel(next_frame_no.get() - 1);
+
         let shared = Arc::new(SharedWal {
             current,
             wal_lock: Default::default(),
             db_file,
             registry: self.clone(),
             namespace: namespace.clone(),
+            checkpointed_frame_no: header.replication_index.get().into(),
+            new_frame_notifier,
         });
 
         opened.with_upgraded(|opened| {
@@ -215,19 +208,9 @@ impl<FS: Io> WalRegistry<FS> {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn swap_current(
-        &self,
-        shared: &SharedWal<FS>,
-        tx: &WriteTransaction<FS::File>,
-    ) -> Result<()> {
+    pub fn swap_current(&self, shared: &SharedWal<FS>, tx: &TxGuard<FS::File>) -> Result<()> {
         assert!(tx.is_commited());
         // at this point we must hold a lock to a commited transaction.
-        // First, we'll acquire the lock to the current transaction to make sure no one steals it from us:
-        let lock = shared.wal_lock.tx_id.lock();
-        // Make sure that we still own the transaction:
-        if lock.is_none() || lock.unwrap() != tx.id {
-            return Ok(());
-        }
 
         let current = shared.current.load();
         if current.is_empty() {
@@ -275,8 +258,11 @@ impl<FS: Io> WalRegistry<FS> {
             };
             let mut tx = Transaction::Read(shared.begin_read(u64::MAX));
             shared.upgrade(&mut tx)?;
-            tx.commit();
-            self.swap_current(&shared, &mut tx.as_write_mut().unwrap())?;
+            {
+                let mut tx = tx.as_write_mut().unwrap().lock();
+                tx.commit();
+                self.swap_current(&shared, &tx)?;
+            }
             // The current segment will not be used anymore. It's empty, but we still seal it so that
             // the next startup doesn't find an unsealed segment.
             shared.current.load().seal()?;

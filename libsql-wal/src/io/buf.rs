@@ -94,6 +94,23 @@ pub struct ZeroCopyBuf<T> {
     inner: MaybeUninit<T>,
 }
 
+#[repr(transparent)]
+pub struct ZeroCopyBoxIoBuf<T>(pub Box<T>);
+
+unsafe impl<T: AsBytes + Unpin + 'static> IoBuf for ZeroCopyBoxIoBuf<T> {
+    fn stable_ptr(&self) -> *const u8 {
+        T::as_bytes(&self.0).as_ptr()
+    }
+
+    fn bytes_init(&self) -> usize {
+        self.bytes_total()
+    }
+
+    fn bytes_total(&self) -> usize {
+        size_of::<T>()
+    }
+}
+
 impl<T> ZeroCopyBuf<T> {
     pub fn new_init(inner: T) -> Self {
         Self {
@@ -120,6 +137,11 @@ impl<T> ZeroCopyBuf<T> {
     pub fn get_ref(&self) -> &T {
         assert!(self.is_init());
         unsafe { self.inner.assume_init_ref() }
+    }
+
+    pub fn into_inner(self) -> T {
+        assert!(self.is_init());
+        unsafe { self.inner.assume_init() }
     }
 
     pub fn deinit(&mut self) {

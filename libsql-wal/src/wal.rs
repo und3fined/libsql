@@ -52,7 +52,7 @@ impl<FS: Io> WalManager for LibsqlWalManager<FS> {
             .registry
             .clone()
             .open(db_path.as_ref())
-            .map_err(|e| dbg!(e.into()))?;
+            .map_err(|e| e.into())?;
         let conn_id = self
             .next_conn_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -119,12 +119,7 @@ impl<FS: Io> Wal for LibsqlWal<FS> {
 
     #[tracing::instrument(skip_all, fields(id = self.conn_id))]
     fn end_read_txn(&mut self) {
-        match self.tx.take() {
-            Some(Transaction::Read(tx)) => tx,
-            Some(Transaction::Write(tx)) => tx.downgrade(),
-            None => return,
-        };
-
+        self.tx.take().map(|tx| tx.end());
         tracing::trace!("end read tx");
     }
 
@@ -262,7 +257,11 @@ impl<FS: Io> Wal for LibsqlWal<FS> {
         match self.tx.as_mut() {
             Some(Transaction::Write(ref mut tx)) => {
                 self.shared
-                    .insert_frames(tx, page_headers, size_after)
+                    .insert_frames(
+                        tx,
+                        page_headers.iter(),
+                        (size_after != 0).then_some(size_after),
+                    )
                     .map_err(Into::into)?;
             }
             _ => todo!("no write transaction"),
