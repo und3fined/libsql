@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;

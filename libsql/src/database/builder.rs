@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 cfg_core! {
     use crate::EncryptionConfig;
 }
